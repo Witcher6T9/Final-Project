@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Security Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email == 'ashikhossainkr@gmail.com' ||
+        request.auth.token.email == 'ashikur.rahman.0971@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profiles
+    match /user_profiles/{userId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(userId) && (
+        isOwner(userId) || isAdmin()
+      ) && incoming().userId == userId && incoming().name is string && incoming().name.size() <= 100;
+      allow update: if isVerified() && isValidId(userId) && (
+        isOwner(userId) || isAdmin()
+      ) && incoming().userId == userId;
+      allow delete: if isAdmin();
+    }
+
+    // Line Production Entries
+    match /line_entries/{lineId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(lineId) && (
+        incoming().id == lineId &&
+        incoming().lineNo is string && incoming().lineNo.size() <= 40 &&
+        incoming().style is string && incoming().style.size() <= 100
+      );
+      allow update: if isVerified() && isValidId(lineId);
+      allow delete: if isAdmin();
+    }
+
+    // Daily IE Checklists
+    match /checklists/{checklistId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(checklistId) && (
+        incoming().id == checklistId &&
+        incoming().lineNo is string &&
+        incoming().auditorId == request.auth.uid
+      );
+      allow update: if isVerified() && isValidId(checklistId) && (
+        existing().auditorId == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Floor Action Items / Todos
+    match /todos/{todoId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(todoId) && (
+        incoming().id == todoId &&
+        incoming().title is string && incoming().title.size() <= 300 &&
+        incoming().creatorId == request.auth.uid
+      );
+      allow update: if isVerified() && isValidId(todoId);
+      allow delete: if isVerified() && (existing().creatorId == request.auth.uid || isAdmin());
+    }
+
+    // Lean Kaizen Actions
+    match /lean_actions/{actionId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(actionId) && (
+        incoming().id == actionId &&
+        incoming().title is string && incoming().title.size() <= 200 &&
+        incoming().creatorId == request.auth.uid
+      );
+      allow update: if isVerified() && isValidId(actionId);
+      allow delete: if isAdmin() || (isVerified() && existing().creatorId == request.auth.uid);
+    }
+
+    // Real-time Chat & Dispatch Messages
+    match /chat_messages/{messageId} {
+      allow get: if isVerified();
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(messageId) && (
+        incoming().id == messageId &&
+        incoming().senderId == request.auth.uid &&
+        incoming().text is string && incoming().text.size() <= 2000
+      );
+      allow update: if false; // Messages are immutable
+      allow delete: if isAdmin() || (isVerified() && existing().senderId == request.auth.uid);
+    }
+  }
+}
